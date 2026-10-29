@@ -88,6 +88,9 @@
     background: var(--ink); color: var(--yellow);
     padding: .5rem 1rem; border-radius: 12px; font-size: 1.1rem;
   }
+  #gate { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(255,214,10,.9); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); cursor: pointer; }
+  #gate[hidden] { display: none; }
+  #gate span { font-size: clamp(1.6rem, 5vw, 3rem); background: var(--ink); color: var(--yellow); padding: .8rem 1.8rem; border-radius: 16px; animation: pulse 1.2s ease-in-out infinite; }
   #hint { position: fixed; bottom: 1rem; left: 0; right: 0; text-align: center; font-size: .95rem; pointer-events: none; }
   #mute {
     position: fixed; top: 1rem; right: 1rem;
@@ -127,6 +130,7 @@
 
 <div id="score">Giggles: 0</div>
 <p id="hint"></p>
+<div id="gate"><span>Tap anywhere to start</span></div>
 <audio id="bgm" src="bg1.mp3" loop preload="auto"></audio>
 
 <script>
@@ -136,18 +140,24 @@
   let wantMusic = true;
   bgm.volume = 0.6;
 
+  const unlockEvents = ['pointerdown', 'pointerup', 'mousedown', 'click', 'touchend', 'keydown'];
+  const gate = document.getElementById('gate');
+
   function startMusic() {
     if (!wantMusic) return;
-    bgm.play().then(removeUnlockers).catch(() => {
-      hint.textContent = 'Tap anywhere to start the music';
-    });
+    bgm.play().then(() => {
+      unlockEvents.forEach(e => document.removeEventListener(e, startMusic));
+    }).catch(() => {});
   }
-  function removeUnlockers() {
-    hint.textContent = '';
-    ['pointerdown', 'keydown', 'touchstart'].forEach(e => document.removeEventListener(e, startMusic));
-  }
-  ['pointerdown', 'keydown', 'touchstart'].forEach(e => document.addEventListener(e, startMusic));
+  // Browsers only allow sound after a tap/click/key press, so retry on the first one.
+  unlockEvents.forEach(e => document.addEventListener(e, startMusic));
+  bgm.addEventListener('canplaythrough', startMusic, { once: true });
   startMusic();
+
+  // Yellow cover screen: first tap or key press starts the music and reveals the page
+  function openGate() { gate.hidden = true; startMusic(); }
+  gate.addEventListener('click', openGate);
+  document.addEventListener('keydown', () => { if (!gate.hidden) openGate(); });
 
   muteBtn.addEventListener('click', (ev) => {
     ev.stopPropagation();
