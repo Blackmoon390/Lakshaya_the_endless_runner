@@ -31,6 +31,25 @@ const NECK_X=204;                           // neck centre x (frame px)
 const CHIN_DROP=45;                         // how far the chin sits below neck top (bigger = head lower)
 const HEAD1_DX=0, HEAD1_DY=0, HEAD2_DX=0, HEAD2_DY=0; // fine nudges (frame px)
 const S=0.3, SW=FW*S, SH=FH*S;
+
+// ===== SPEED =====
+const START_SPEED=230;   // running speed at start (was 320)
+const MAX_SPEED=400;     // top speed (was 720)
+const SPEED_RAMP=250;    // distance (px) needed for +1 speed -> bigger = speeds up more slowly
+// ===== NPC (runs in front of the player; the player chases it) =====
+const NPC_BODY="animated_frame/npc_body_strip.png"; // 7-frame headless body strip (already prepared)
+const NPC_HEAD="animated_frame/head_npc.png";       // <<< NPC HEAD FILE (inside animated_frame folder)
+const NPC_X=520;                 // world x of the NPC's neck (player neck is ~151) -> bigger = further ahead
+const NFW=340, NFH=410;          // NPC strip: frame size (px)
+const NNECK_X=230;               // neck centre x inside each frame
+const NNECK_TOP=[7,7,6,8,6,7,10];// neck top y per frame
+const NFOOT=398;                 // y of the feet/ground line inside a frame
+const NS=0.28;                   // NPC body scale (same idea as S)
+const NPC_HEAD_H=170;            // head height in frame px (bigger = bigger head)
+const NPC_CHIN=[0.5,0.95];       // chin point inside head image (0..1 of width/height)
+const NPC_CHIN_DROP=18;          // how far chin sits below neck top (bigger = head lower)
+const NPC_HEAD_DX=0, NPC_HEAD_DY=0; // fine nudges (frame px)
+const NPC_JUMP_V=-860;           // NPC jump strength
 const cv=document.getElementById('c'), ctx=cv.getContext('2d');
 let W=800,H=400,GROUND=330,K=1,OY=0,DPR=1,VT=0,VB=400;const PX=90;
 function resize(){
@@ -43,13 +62,15 @@ function resize(){
   OY=(ch/K-H)/2;                      // centre play area vertically
   GROUND=H-70; VT=-OY; VB=H+OY;
 }
-const body=new Image(), head=new Image(), head2=new Image(); body.src=BODY; head.src=HEAD; head2.src=HEAD2;
+const body=new Image(), head=new Image(), head2=new Image(), nbody=new Image(), nhead=new Image(); let nheadOK=false;
+nhead.onload=()=>{nheadOK=true};
+body.src=BODY; head.src=HEAD; head2.src=HEAD2; nbody.src=NPC_BODY; nhead.src=NPC_HEAD;
 
 let best=0; try{best=+localStorage.getItem('rb')||0}catch(e){}
 let st, last=0;
 
 function reset(){
-  st={y:0,vy:0,air:false,speed:320,dist:0,t:0,frame:0,obs:[],next:1.0,clouds:[],over:false,started:false,off:0};
+  st={npc:{y:0,vy:0,air:false,frame:0},y:0,vy:0,air:false,speed:START_SPEED,dist:0,t:0,frame:0,obs:[],next:1.0,clouds:[],over:false,started:false,off:0};
   for(let i=0;i<4;i++) st.clouds.push({x:Math.random()*W,y:30+Math.random()*90,s:.6+Math.random()*.6});
 }
 function jump(){
@@ -71,13 +92,13 @@ function spawn(){
   else o={w:90,h:44,type:'crate3'};
   o.x=W+20; st.obs.push(o);
   const gap=.9+Math.random()*.9;
-  st.next=gap*(1-Math.min(.35,(st.speed-320)/1200));
+  st.next=gap*(1-Math.min(.35,(st.speed-START_SPEED)/1200));
 }
 
 function update(dt){
   st.t+=dt;
   if(st.over||!st.started) return;
-  st.speed=Math.min(720,320+st.dist/12);
+  st.speed=Math.min(MAX_SPEED,START_SPEED+st.dist/SPEED_RAMP);
   st.dist+=st.speed*dt;
   st.off=(st.off+st.speed*dt)%40;
   if(st.air){ st.vy+=2400*dt; st.y+=st.vy*dt; if(st.y>=0){st.y=0;st.vy=0;st.air=false;} }
@@ -86,6 +107,17 @@ function update(dt){
   for(const o of st.obs) o.x-=st.speed*dt;
   st.obs=st.obs.filter(o=>o.x+o.w>-10);
   st.clouds.forEach(c=>{c.x-=st.speed*dt*.1*c.s; if(c.x<-80){c.x=W+40;c.y=30+Math.random()*90;}});
+  // NPC: runs ahead, jumps obstacles before the player gets there
+  const n=st.npc;
+  n.frame=(n.frame+dt*st.speed/38)%7;
+  if(n.air){ n.vy+=2400*dt; n.y+=n.vy*dt; if(n.y>=0){n.y=0;n.vy=0;n.air=false;} }
+  else{
+    const airTime=2*-NPC_JUMP_V/2400;
+    for(const o of st.obs){
+      const d=(o.x+o.w/2)-NPC_X;               // distance from NPC to obstacle centre
+      if(d>0 && d<=st.speed*airTime/2+4){ n.vy=NPC_JUMP_V; n.air=true; break; }
+    }
+  }
   // hitbox (forgiving)
   const hx=PX+SW*.25, hw=SW*.35, hy=GROUND+st.y-SH+18, hh=SH-22;
   for(const o of st.obs){
@@ -121,8 +153,23 @@ function draw(){
   ctx.fillStyle='#8a6a43'; ctx.fillRect(0,GROUND+10,W,VB-GROUND);
   ctx.fillStyle='#755a38'; for(let x=-st.off;x<W;x+=40) ctx.fillRect(x,GROUND+28,18,5);
   st.obs.forEach(drawObs);
+  // NPC (drawn behind the player)
+  if(nbody.complete&&nbody.naturalWidth){
+    const n=st.npc, f=n.air?2:(st.started?Math.floor(n.frame):0);
+    const nx=NPC_X-NNECK_X*NS, ny=GROUND+n.y-NFOOT*NS;
+    ctx.drawImage(nbody,f*NFW,0,NFW,NFH,nx,ny,NFW*NS,NFH*NS);
+    const ax=NPC_X+NPC_HEAD_DX*NS, ay=ny+(NNECK_TOP[f]+NPC_CHIN_DROP+NPC_HEAD_DY)*NS;
+    if(nheadOK){
+      const hh=NPC_HEAD_H*NS, hw=hh*nhead.naturalWidth/nhead.naturalHeight;
+      ctx.drawImage(nhead, ax-hw*NPC_CHIN[0], ay-hh*NPC_CHIN[1], hw, hh);
+    } else { // placeholder until the head file exists
+      const r=NPC_HEAD_H*NS*.4;
+      ctx.fillStyle='#f6c9a0'; ctx.strokeStyle='#223'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(ax,ay-r+2,r,0,7); ctx.fill(); ctx.stroke();
+    }
+  }
   // player
-  if(body.complete&&head.complete&&head2.complete){
+  if(body.naturalWidth&&head.naturalWidth&&head2.naturalWidth){
     const f=st.air?2:(st.started?Math.floor(st.frame):0);
     const x=PX, y=GROUND+st.y-SH+4;
     ctx.imageSmoothingQuality='high';
