@@ -36,6 +36,13 @@ const S=0.3, SW=FW*S, SH=FH*S;
 const START_SPEED=230;   // running speed at start (was 320)
 const MAX_SPEED=400;     // top speed (was 720)
 const SPEED_RAMP=250;    // distance (px) needed for +1 speed -> bigger = speeds up more slowly
+// ===== JUMP & OBSTACLES (adjust automatically to running speed) =====
+const JUMP_H=150;        // jump height (px)
+const JUMP_DIST=250;     // horizontal distance covered in one jump (px) -> bigger = longer jump
+const JUMP_MIN_T=0.6;    // shortest jump time (s)
+const MIN_GAP=400;       // minimum distance between obstacles (px)
+const GAP_RANGE=300;     // extra random distance between obstacles (px)
+function jumpParams(speed){ const T=Math.max(JUMP_MIN_T,JUMP_DIST/speed); return {T, v:-4*JUMP_H/T, g:8*JUMP_H/(T*T)}; }
 // ===== NPC (runs in front of the player; the player chases it) =====
 const NPC_BODY="animated_frame/npc_body_strip.png"; // 7-frame headless body strip (already prepared)
 const NPC_HEAD="animated_frame/head_npc.png";       // <<< NPC HEAD FILE (inside animated_frame folder)
@@ -47,9 +54,8 @@ const NFOOT=398;                 // y of the feet/ground line inside a frame
 const NS=0.28;                   // NPC body scale (same idea as S)
 const NPC_HEAD_H=170;            // head height in frame px (bigger = bigger head)
 const NPC_CHIN=[0.5,0.95];       // chin point inside head image (0..1 of width/height)
-const NPC_CHIN_DROP=18;          // how far chin sits below neck top (bigger = head lower)
-const NPC_HEAD_DX=0, NPC_HEAD_DY=0; // fine nudges (frame px)
-const NPC_JUMP_V=-860;           // NPC jump strength
+const NPC_CHIN_DROP=40;          // how far chin sits below neck top (bigger = head lower)
+const NPC_HEAD_DX=20, NPC_HEAD_DY=0; // fine nudges (frame px)
 const cv=document.getElementById('c'), ctx=cv.getContext('2d');
 let W=800,H=400,GROUND=330,K=1,OY=0,DPR=1,VT=0,VB=400;const PX=90;
 function resize(){
@@ -70,13 +76,13 @@ let best=0; try{best=+localStorage.getItem('rb')||0}catch(e){}
 let st, last=0;
 
 function reset(){
-  st={npc:{y:0,vy:0,air:false,frame:0},y:0,vy:0,air:false,speed:START_SPEED,dist:0,t:0,frame:0,obs:[],next:1.0,clouds:[],over:false,started:false,off:0};
+  st={npc:{y:0,vy:0,g:2400,air:false,frame:0},g:2400,y:0,vy:0,air:false,speed:START_SPEED,dist:0,t:0,frame:0,obs:[],next:1.0,clouds:[],over:false,started:false,off:0};
   for(let i=0;i<4;i++) st.clouds.push({x:Math.random()*W,y:30+Math.random()*90,s:.6+Math.random()*.6});
 }
 function jump(){
   if(st.over){ if(st.t>.4) {reset(); st.started=true;} return; }
   st.started=true;
-  if(!st.air){ st.vy=-860; st.air=true; }
+  if(!st.air){ const j=jumpParams(st.speed); st.vy=j.v; st.g=j.g; st.air=true; }
 }
 addEventListener('keydown',e=>{ if(['Space','ArrowUp','KeyW'].includes(e.code)){e.preventDefault(); if(!e.repeat) jump();} });
 document.getElementById('btnRestart').addEventListener('click',e=>{reset(); st.started=true; e.currentTarget.blur();});
@@ -91,8 +97,7 @@ function spawn(){
   else if(k<.9) o={w:56,h:44,type:'crate2'};
   else o={w:90,h:44,type:'crate3'};
   o.x=W+20; st.obs.push(o);
-  const gap=.9+Math.random()*.9;
-  st.next=gap*(1-Math.min(.35,(st.speed-START_SPEED)/1200));
+  st.next=(MIN_GAP+Math.random()*GAP_RANGE)/st.speed;   // spacing in px, so it scales with speed
 }
 
 function update(dt){
@@ -101,7 +106,7 @@ function update(dt){
   st.speed=Math.min(MAX_SPEED,START_SPEED+st.dist/SPEED_RAMP);
   st.dist+=st.speed*dt;
   st.off=(st.off+st.speed*dt)%40;
-  if(st.air){ st.vy+=2400*dt; st.y+=st.vy*dt; if(st.y>=0){st.y=0;st.vy=0;st.air=false;} }
+  if(st.air){ st.vy+=st.g*dt; st.y+=st.vy*dt; if(st.y>=0){st.y=0;st.vy=0;st.air=false;} }
   st.frame=(st.frame+dt*st.speed/38)%7;
   st.next-=dt; if(st.next<=0) spawn();
   for(const o of st.obs) o.x-=st.speed*dt;
@@ -110,12 +115,12 @@ function update(dt){
   // NPC: runs ahead, jumps obstacles before the player gets there
   const n=st.npc;
   n.frame=(n.frame+dt*st.speed/38)%7;
-  if(n.air){ n.vy+=2400*dt; n.y+=n.vy*dt; if(n.y>=0){n.y=0;n.vy=0;n.air=false;} }
+  if(n.air){ n.vy+=n.g*dt; n.y+=n.vy*dt; if(n.y>=0){n.y=0;n.vy=0;n.air=false;} }
   else{
-    const airTime=2*-NPC_JUMP_V/2400;
+    const j=jumpParams(st.speed);
     for(const o of st.obs){
       const d=(o.x+o.w/2)-NPC_X;               // distance from NPC to obstacle centre
-      if(d>0 && d<=st.speed*airTime/2+4){ n.vy=NPC_JUMP_V; n.air=true; break; }
+      if(d>0 && d<=st.speed*j.T/2+4){ n.vy=j.v; n.g=j.g; n.air=true; break; }
     }
   }
   // hitbox (forgiving)
