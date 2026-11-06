@@ -55,7 +55,37 @@ const NS=0.28;                   // NPC body scale (same idea as S)
 const NPC_HEAD_H=170;            // head height in frame px (bigger = bigger head)
 const NPC_CHIN=[0.5,0.95];       // chin point inside head image (0..1 of width/height)
 const NPC_CHIN_DROP=40;          // how far chin sits below neck top (bigger = head lower)
-const NPC_HEAD_DX=20, NPC_HEAD_DY=0; // fine nudges (frame px)
+const NPC_HEAD_DX=10, NPC_HEAD_DY=0; // fine nudges (frame px)
+// ===== NPC 2 (starts at the player, overtakes, squats between player & NPC 1 and drops an obstacle, then overtakes NPC 1 and leaves the screen) =====
+const N2_BODY="animated_frame/npc_2_body_strip.png";   // 7-frame headless run strip
+const N2_HEAD="animated_frame/head_npc2.png";         // NPC 2 head
+const N2_SIT ="animated_frame/npc2_sit.png";          // squatting pose (headless)
+const POOP_IMGS=["animated_frame/obstacle1.png","animated_frame/obstacle2.png"]; // one is picked at random
+const N2_FW=1916/7, N2_SY=220, N2_SH=410;             // strip: frame width, crop top, crop height (px)
+const N2_NECK_X=[178,184,193.5,204,206,203,193];      // neck centre x per frame
+const N2_NECK_TOP=[13,15,16,15,16,16,16];             // neck top y per frame (after crop)
+const N2_FOOT=400;                                    // ground line inside the cropped frame
+const N2_HEAD_H=170, N2_CHIN=[0.5,0.97], N2_CHIN_DROP=40, N2_HEAD_DX=0, N2_HEAD_DY=0; // head size / placement
+const N2_START_X=70;     // where NPC2 starts (just behind the player)
+const N2_REL=[150,240];  // overtaking speed (px/s): random per visit [min,max]
+// Each visit picks a random PATTERN (never the same one twice in a row). w = how common, stops = where it squats (neck x) and whether it drops an obstacle.
+// (player neck ~151, NPC1 neck ~520, screen is >= 800 wide)
+const N2_PATTERNS=[   // every pattern ALWAYS drops an obstacle on the ground in front of the player or in front of NPC1
+  {name:'classic',w:40,stops:[{x:470,drop:true}]},                        // squat between player and NPC1 -> obstacle in front of the player
+  {name:'late',   w:35,stops:[{x:650,drop:true}]},                        // pass NPC1 first, then drop -> obstacle in front of NPC1
+  {name:'double', w:25,stops:[{x:420,drop:true},{x:650,drop:true}]}       // one in front of the player, one in front of NPC1
+];
+function pickPattern(last){
+  const c=N2_PATTERNS.filter(p=>p.name!==last); let r=Math.random()*c.reduce((a,p)=>a+p.w,0);
+  for(const p of c){ if((r-=p.w)<0) return p; } return c[0];
+}
+const N2_SIT_T=0.55;     // seconds spent squatting
+const N2_FIRST=[8,16];   // first appearance: random wait in seconds [min,max]
+const N2_GAP=[20,45];    // later appearances: random wait between visits [min,max] -> bigger = rarer
+const n2wait=r=>r[0]+Math.random()*(r[1]-r[0]);
+const SIT_CROP=[390,155,670,995], SIT_NECK=[490,8], SIT_S=0.09; // sit image crop, neck point, SIZE
+const SIT_HEAD_DX=0, SIT_HEAD_DY=0;                   // nudge head on the squat pose
+const POOP_CROP=[244,64,336,333], POOP_W=38, POOP_H=38, POOP_BUTT_X=65; // obstacle crop + size
 const cv=document.getElementById('c'), ctx=cv.getContext('2d');
 let W=800,H=400,GROUND=330,K=1,OY=0,DPR=1,VT=0,VB=400;const PX=90;
 function resize(){
@@ -70,13 +100,15 @@ function resize(){
 }
 const body=new Image(), head=new Image(), head2=new Image(), nbody=new Image(), nhead=new Image(); let nheadOK=false;
 nhead.onload=()=>{nheadOK=true};
+const n2body=new Image(), n2head=new Image(), n2sit=new Image(), poopImgs=POOP_IMGS.map(u=>{const i=new Image(); i.src=u; return i;});
+n2body.src=N2_BODY; n2head.src=N2_HEAD; n2sit.src=N2_SIT;
 body.src=BODY; head.src=HEAD; head2.src=HEAD2; nbody.src=NPC_BODY; nhead.src=NPC_HEAD;
 
 let best=0; try{best=+localStorage.getItem('rb')||0}catch(e){}
 let st, last=0;
 
 function reset(){
-  st={npc:{y:0,vy:0,g:2400,air:false,frame:0},g:2400,y:0,vy:0,air:false,speed:START_SPEED,dist:0,t:0,frame:0,obs:[],next:1.0,clouds:[],over:false,started:false,off:0};
+  st={npc:{y:0,vy:0,g:2400,air:false,frame:0},npc2:{state:'idle',timer:n2wait(N2_FIRST),x:N2_START_X,y:0,vy:0,g:2400,air:false,frame:0,sitT:0,stops:[],si:0,rel:170,last:''},g:2400,y:0,vy:0,air:false,speed:START_SPEED,dist:0,t:0,frame:0,obs:[],next:1.0,clouds:[],hearts:[],heartT:0,over:false,started:false,off:0};
   for(let i=0;i<4;i++) st.clouds.push({x:Math.random()*W,y:30+Math.random()*90,s:.6+Math.random()*.6});
 }
 function jump(){
@@ -102,6 +134,7 @@ function spawn(){
 
 function update(dt){
   st.t+=dt;
+  updateHearts(dt);   // hearts are always on, even on the start / game over screen
   if(st.over||!st.started) return;
   st.speed=Math.min(MAX_SPEED,START_SPEED+st.dist/SPEED_RAMP);
   st.dist+=st.speed*dt;
@@ -123,6 +156,7 @@ function update(dt){
       if(d>0 && d<=st.speed*j.T/2+4){ n.vy=j.v; n.g=j.g; n.air=true; break; }
     }
   }
+  updateNpc2(dt);
   // hitbox (forgiving)
   const hx=PX+SW*.25, hw=SW*.35, hy=GROUND+st.y-SH+18, hh=SH-22;
   for(const o of st.obs){
@@ -134,8 +168,104 @@ function update(dt){
   }
 }
 
+function updateNpc2(dt){
+  const n=st.npc2, sp=st.speed;
+  if(n.state==='idle'){
+    n.timer-=dt;
+    if(n.timer<=0){
+      const p=pickPattern(n.last); n.last=p.name;
+      n.stops=p.stops.map(q=>({x:q.x+(Math.random()*40-20),drop:q.drop}));   // small random shift of each stop
+      n.si=0; n.rel=N2_REL[0]+Math.random()*(N2_REL[1]-N2_REL[0]);
+      n.state='run'; n.x=N2_START_X; n.y=0; n.vy=0; n.air=false; n.frame=0;
+    }
+    return;
+  }
+  if(n.state==='sit'){                       // squatting: stays on the ground, so it scrolls with the world
+    n.x-=sp*dt; n.sitT+=dt;
+    if(n.sitT>=N2_SIT_T){ n.state='run'; n.si++; }
+    return;
+  }
+  let vx=n.rel;
+  n.frame=(n.frame+dt*(sp+vx*.5)/38)%7;
+  const stop=n.stops[n.si];
+  if(stop && n.x>=stop.x && !n.air){
+    const clear=!st.obs.some(o=>o.x+o.w>n.x-150 && o.x<n.x+240);
+    if(clear){ startSit(n,stop); return; }
+    vx=0;                                    // hold position (running in place) until the path is clear
+  }
+  n.x+=vx*dt;
+  if(n.air){ n.vy+=n.g*dt; n.y+=n.vy*dt; if(n.y>=0){n.y=0;n.vy=0;n.air=false;} }
+  else{
+    const j=jumpParams(sp), closing=sp+vx;
+    for(const o of st.obs){
+      const d=(o.x+o.w/2)-n.x;
+      if(d>0 && d<=closing*j.T/2+4){ n.vy=j.v; n.g=j.g; n.air=true; break; }
+    }
+  }
+  if(n.si>=n.stops.length && n.x>W+120){ n.state='idle'; n.timer=n2wait(N2_GAP); }   // left the screen -> next visit later
+}
+function startSit(n,stop){
+  n.state='sit'; n.sitT=0; n.y=0; n.vy=0; n.air=false;
+  if(!stop.drop) return;
+  const dx=n.x-SIT_NECK[0]*SIT_S;            // left edge of the squat image
+  st.obs.push({w:POOP_W,h:POOP_H,type:'poop',img:Math.floor(Math.random()*POOP_IMGS.length),x:dx+POOP_BUTT_X*SIT_S-POOP_W/2});
+}
+// ===== LOVE HEARTS near the player's head while NPC 2 is on screen =====
+const HEART_RATE=4;      // hearts per second
+const HEART_DX=0, HEART_DY=0; // nudge spawn point near the head (px)
+function updateHearts(dt){
+  {
+    st.heartT-=dt;
+    while(st.heartT<=0){
+      st.heartT+=1/HEART_RATE;
+      const hx=PX+NECK_X*S+HEART_DX, hy=GROUND+st.y-SH+4+8+HEART_DY;   // just above the player's head
+      st.hearts.push({x:hx+(Math.random()*30-15),y:hy,vx:Math.random()*16-8,vy:-(30+Math.random()*25),s:5+Math.random()*6,life:0,max:1.1+Math.random()*.6,ph:Math.random()*6});
+    }
+  }
+  for(const h of st.hearts){ h.life+=dt; h.y+=h.vy*dt; h.x+=(h.vx+Math.sin(h.life*5+h.ph)*12)*dt; }
+  st.hearts=st.hearts.filter(h=>h.life<h.max);
+}
+function drawHearts(){
+  for(const h of st.hearts){
+    const k=h.life/h.max, s=h.s*(0.6+Math.min(1,k*4)*.4), x=h.x, y=h.y;
+    ctx.globalAlpha=1-k*k;
+    ctx.fillStyle='#ff3b6b'; ctx.strokeStyle='#c2184a'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,y+s*.35);
+    ctx.bezierCurveTo(x-s*.9,y-s*.3,x-s*.45,y-s*.95,x,y-s*.45);
+    ctx.bezierCurveTo(x+s*.45,y-s*.95,x+s*.9,y-s*.3,x,y+s*.35);
+    ctx.fill(); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+}
+function drawNpc2(){
+  const n=st.npc2; if(n.state==='idle') return;
+  let ax,ay,sx,sy,hh=N2_HEAD_H*NS;
+  if(n.state==='sit'){
+    if(!n2sit.naturalWidth) return;
+    const dx=n.x-SIT_NECK[0]*SIT_S, dy=GROUND-989*SIT_S;
+    ctx.drawImage(n2sit,SIT_CROP[0],SIT_CROP[1],SIT_CROP[2],SIT_CROP[3],dx,dy,SIT_CROP[2]*SIT_S,SIT_CROP[3]*SIT_S);
+    ax=n.x+SIT_HEAD_DX; ay=dy+SIT_NECK[1]*SIT_S+N2_CHIN_DROP*NS+SIT_HEAD_DY;
+  } else {
+    if(!n2body.naturalWidth) return;
+    const f=n.air?2:Math.floor(n.frame), fw=Math.round(N2_FW);
+    const nx=n.x-N2_NECK_X[f]*NS, ny=GROUND+n.y-N2_FOOT*NS;
+    ctx.drawImage(n2body,Math.round(f*N2_FW),N2_SY,fw,N2_SH,nx,ny,fw*NS,N2_SH*NS);
+    ax=n.x+N2_HEAD_DX*NS; ay=ny+(N2_NECK_TOP[f]+N2_CHIN_DROP+N2_HEAD_DY)*NS;
+  }
+  if(n2head.naturalWidth){
+    const hw=hh*n2head.naturalWidth/n2head.naturalHeight;
+    ctx.drawImage(n2head,ax-hw*N2_CHIN[0],ay-hh*N2_CHIN[1],hw,hh);
+  }
+}
+
 function drawObs(o){
   const y=GROUND-o.h;
+  if(o.type==='poop'){
+    const im=poopImgs[o.img];
+    if(im&&im.naturalWidth) ctx.drawImage(im,POOP_CROP[0],POOP_CROP[1],POOP_CROP[2],POOP_CROP[3],o.x,y,o.w,o.h);
+    else { ctx.fillStyle='#7a4a22'; ctx.beginPath(); ctx.arc(o.x+o.w/2,GROUND-o.h/2,o.h/2,0,7); ctx.fill(); }
+    return;
+  }
   if(o.type==='cone'){
     ctx.fillStyle='#ff7a1a'; ctx.beginPath(); ctx.moveTo(o.x,GROUND); ctx.lineTo(o.x+o.w,GROUND); ctx.lineTo(o.x+o.w/2,y); ctx.closePath(); ctx.fill();
     ctx.fillStyle='#fff'; ctx.fillRect(o.x+o.w*.28,y+o.h*.42,o.w*.44,6);
@@ -184,6 +314,7 @@ function draw(){
     const ax=NECK_X+(jumping?HEAD2_DX:HEAD1_DX), ay=NECK_TOP[f]+CHIN_DROP+(jumping?HEAD2_DY:HEAD1_DY);
     ctx.drawImage(img, x+ax*S-ch[0]*sc, y+ay*S-ch[1]*sc, HEADS_W*sc, HEADS_H*sc);
   }
+  drawHearts(); drawNpc2();   // NPC 2 (drawn in front, it overtakes everyone)
   // HUD
   ctx.fillStyle='#223'; ctx.font='bold 20px system-ui'; ctx.textAlign='right';
   ctx.fillText('Score '+Math.floor(st.dist/10),W-16,VT+40);
