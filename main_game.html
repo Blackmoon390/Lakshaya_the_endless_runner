@@ -10,7 +10,14 @@ canvas{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;display:blo
 .ui{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);left:calc(env(safe-area-inset-left,0px) + 10px);display:flex;gap:8px;z-index:5}
 .ui button{font:600 15px system-ui,sans-serif;color:#223;background:rgba(255,255,255,.92);border:2px solid #223;border-radius:10px;padding:8px 14px;cursor:pointer;touch-action:manipulation}
 .ui button:active{transform:scale(.96)}
+#loader{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#8fd0ff;font:700 22px system-ui,sans-serif;color:#223;transition:opacity .25s}
+#loader.done{opacity:0;pointer-events:none}
+#bar{width:min(260px,70vw);height:14px;border:3px solid #223;border-radius:10px;background:#fff;overflow:hidden}
+#fill{height:100%;width:0;background:#ffb800;transition:width .15s}
+#lmsg{font-size:15px;font-weight:600}
+#retry{display:none;font:600 15px system-ui,sans-serif;padding:8px 14px;border:2px solid #223;border-radius:10px;background:#fff;cursor:pointer}
 </style></head><body>
+<div id="loader"><div>Loading…</div><div id="bar"><div id="fill"></div></div><div id="lmsg">0%</div><button id="retry" type="button">Retry</button></div>
 <canvas id="c"></canvas>
 <div class="ui">
   <button id="btnMenu" type="button">☰ Menu</button>
@@ -18,7 +25,7 @@ canvas{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;display:blo
 </div>
 <script>
 const MENU_URL="index.html"; // page the Menu button opens
-const BODY="animated_frame/run_strip_body.png", HEAD="animated_frame/head.png", HEAD2="animated_frame/head2_resized.png";
+const BODY="animated_frame/run_strip_body.webp", HEAD="animated_frame/head.webp", HEAD2="animated_frame/head2_resized.webp";
 const FW=290, FH=554, HEAD_W=150, HEAD_H=190;
 const HEAD_TOP=[24,24,20,21,22,21,25];
 const HEAD_LEFT=[127,127,128.5,127.5,126.5,126.5,128.5];
@@ -44,8 +51,8 @@ const MIN_GAP=400;       // minimum distance between obstacles (px)
 const GAP_RANGE=300;     // extra random distance between obstacles (px)
 function jumpParams(speed){ const T=Math.max(JUMP_MIN_T,JUMP_DIST/speed); return {T, v:-4*JUMP_H/T, g:8*JUMP_H/(T*T)}; }
 // ===== NPC (runs in front of the player; the player chases it) =====
-const NPC_BODY="animated_frame/npc_body_strip.png"; // 7-frame headless body strip (already prepared)
-const NPC_HEAD="animated_frame/head_npc.png";       // <<< NPC HEAD FILE (inside animated_frame folder)
+const NPC_BODY="animated_frame/npc_body_strip.webp"; // 7-frame headless body strip (already prepared)
+const NPC_HEAD="animated_frame/head_npc.webp";       // <<< NPC HEAD FILE (inside animated_frame folder)
 const NPC_X=520;                 // world x of the NPC's neck (player neck is ~151) -> bigger = further ahead
 const NFW=340, NFH=410;          // NPC strip: frame size (px)
 const NNECK_X=230;               // neck centre x inside each frame
@@ -57,10 +64,10 @@ const NPC_CHIN=[0.5,0.95];       // chin point inside head image (0..1 of width/
 const NPC_CHIN_DROP=40;          // how far chin sits below neck top (bigger = head lower)
 const NPC_HEAD_DX=10, NPC_HEAD_DY=0; // fine nudges (frame px)
 // ===== NPC 2 (starts at the player, overtakes, squats between player & NPC 1 and drops an obstacle, then overtakes NPC 1 and leaves the screen) =====
-const N2_BODY="animated_frame/npc_2_body_strip.png";   // 7-frame headless run strip
-const N2_HEAD="animated_frame/head_npc2.png";         // NPC 2 head
-const N2_SIT ="animated_frame/npc2_sit.png";          // squatting pose (headless)
-const POOP_IMGS=["animated_frame/obstacle1.png","animated_frame/obstacle2.png"]; // one is picked at random
+const N2_BODY="animated_frame/npc_2_body_strip.webp";   // 7-frame headless run strip
+const N2_HEAD="animated_frame/head_npc2.webp";         // NPC 2 head
+const N2_SIT ="animated_frame/npc2_sit.webp";          // squatting pose (headless)
+const POOP_IMGS=["animated_frame/obstacle1.webp","animated_frame/obstacle2.webp"]; // one is picked at random
 const N2_FW=1916/7, N2_SY=220, N2_SH=410;             // strip: frame width, crop top, crop height (px)
 const N2_NECK_X=[178,184,193.5,204,206,203,193];      // neck centre x per frame
 const N2_NECK_TOP=[13,15,16,15,16,16,16];             // neck top y per frame (after crop)
@@ -98,12 +105,25 @@ function resize(){
   OY=(ch/K-H)/2;                      // centre play area vertically
   GROUND=H-70; VT=-OY; VB=H+OY;
 }
-const body=new Image(), head=new Image(), head2=new Image(), nbody=new Image(), nhead=new Image(); let nheadOK=false;
-nhead.onload=()=>{nheadOK=true};
-const n2body=new Image(), n2head=new Image(), n2sit=new Image(), poopImgs=POOP_IMGS.map(u=>{const i=new Image(); i.src=u; return i;});
-n2body.src=N2_BODY; n2head.src=N2_HEAD; n2sit.src=N2_SIT;
-body.src=BODY; head.src=HEAD; head2.src=HEAD2; nbody.src=NPC_BODY; nhead.src=NPC_HEAD;
+// ---- Asset loading: images are downscaled files; (ow,oh) = ORIGINAL size so all the coordinates above still work ----
+const ASSETS=[]; let loadedN=0;
+function ld(url,ow,oh){const i=new Image(); i.decoding='async'; i.ow=ow; i.oh=oh; i.url=url; ASSETS.push(i); return i;}
+const body=ld(BODY,2030,554), head=ld(HEAD,1390,1132), head2=ld(HEAD2,1390,1132), nbody=ld(NPC_BODY,2380,410), nhead=ld(NPC_HEAD,1231,1277); let nheadOK=false;
+const n2body=ld(N2_BODY,1916,821), n2head=ld(N2_HEAD,1176,1338), n2sit=ld(N2_SIT,670,995), poopImgs=POOP_IMGS.map(u=>ld(u,336,333));
+// draw a source rectangle given in ORIGINAL pixel coordinates
+function dr(im,sx,sy,sw,sh,dx,dy,dw,dh){const kx=im.naturalWidth/im.ow, ky=im.naturalHeight/im.oh; ctx.drawImage(im,Math.round(sx*kx),Math.round(sy*ky),Math.max(1,Math.round(sw*kx)),Math.max(1,Math.round(sh*ky)),dx,dy,dw,dh);}
+function loadAll(){
+  const fill=document.getElementById('fill'), msg=document.getElementById('lmsg');
+  loadedN=0; fill.style.width='0'; msg.textContent='0%';
+  const tick=()=>{loadedN++; const p=Math.round(loadedN/ASSETS.length*100); fill.style.width=p+'%'; msg.textContent=p+'%';};
+  return Promise.all(ASSETS.map(i=>new Promise((res,rej)=>{
+    i.onload=()=>{(i.decode?i.decode():Promise.resolve()).catch(()=>{}).then(()=>{tick(); res();});};
+    i.onerror=()=>rej(new Error('Failed to load '+i.url));
+    i.src=i.url;
+  })));
+}
 
+let ready=false;
 let best=0; try{best=+localStorage.getItem('rb')||0}catch(e){}
 let st, last=0;
 
@@ -112,12 +132,13 @@ function reset(){
   for(let i=0;i<4;i++) st.clouds.push({x:Math.random()*W,y:30+Math.random()*90,s:.6+Math.random()*.6});
 }
 function jump(){
+  if(!ready) return;
   if(st.over){ if(st.t>.4) {reset(); st.started=true;} return; }
   st.started=true;
   if(!st.air){ const j=jumpParams(st.speed); st.vy=j.v; st.g=j.g; st.air=true; }
 }
 addEventListener('keydown',e=>{ if(['Space','ArrowUp','KeyW'].includes(e.code)){e.preventDefault(); if(!e.repeat) jump();} });
-document.getElementById('btnRestart').addEventListener('click',e=>{reset(); st.started=true; e.currentTarget.blur();});
+document.getElementById('btnRestart').addEventListener('click',e=>{if(!ready) return; reset(); st.started=true; e.currentTarget.blur();});
 document.getElementById('btnMenu').addEventListener('click',()=>{location.href=MENU_URL;});
 cv.addEventListener('pointerdown',e=>{e.preventDefault(); jump();});
 
@@ -243,13 +264,13 @@ function drawNpc2(){
   if(n.state==='sit'){
     if(!n2sit.naturalWidth) return;
     const dx=n.x-SIT_NECK[0]*SIT_S, dy=GROUND-989*SIT_S;
-    ctx.drawImage(n2sit,SIT_CROP[0],SIT_CROP[1],SIT_CROP[2],SIT_CROP[3],dx,dy,SIT_CROP[2]*SIT_S,SIT_CROP[3]*SIT_S);
+    ctx.drawImage(n2sit,dx,dy,SIT_CROP[2]*SIT_S,SIT_CROP[3]*SIT_S);
     ax=n.x+SIT_HEAD_DX; ay=dy+SIT_NECK[1]*SIT_S+N2_CHIN_DROP*NS+SIT_HEAD_DY;
   } else {
     if(!n2body.naturalWidth) return;
     const f=n.air?2:Math.floor(n.frame), fw=Math.round(N2_FW);
     const nx=n.x-N2_NECK_X[f]*NS, ny=GROUND+n.y-N2_FOOT*NS;
-    ctx.drawImage(n2body,Math.round(f*N2_FW),N2_SY,fw,N2_SH,nx,ny,fw*NS,N2_SH*NS);
+    dr(n2body,Math.round(f*N2_FW),N2_SY,fw,N2_SH,nx,ny,fw*NS,N2_SH*NS);
     ax=n.x+N2_HEAD_DX*NS; ay=ny+(N2_NECK_TOP[f]+N2_CHIN_DROP+N2_HEAD_DY)*NS;
   }
   if(n2head.naturalWidth){
@@ -262,7 +283,7 @@ function drawObs(o){
   const y=GROUND-o.h;
   if(o.type==='poop'){
     const im=poopImgs[o.img];
-    if(im&&im.naturalWidth) ctx.drawImage(im,POOP_CROP[0],POOP_CROP[1],POOP_CROP[2],POOP_CROP[3],o.x,y,o.w,o.h);
+    if(im&&im.naturalWidth) ctx.drawImage(im,o.x,y,o.w,o.h);
     else { ctx.fillStyle='#7a4a22'; ctx.beginPath(); ctx.arc(o.x+o.w/2,GROUND-o.h/2,o.h/2,0,7); ctx.fill(); }
     return;
   }
@@ -292,7 +313,7 @@ function draw(){
   if(nbody.complete&&nbody.naturalWidth){
     const n=st.npc, f=n.air?2:(st.started?Math.floor(n.frame):0);
     const nx=NPC_X-NNECK_X*NS, ny=GROUND+n.y-NFOOT*NS;
-    ctx.drawImage(nbody,f*NFW,0,NFW,NFH,nx,ny,NFW*NS,NFH*NS);
+    dr(nbody,f*NFW,0,NFW,NFH,nx,ny,NFW*NS,NFH*NS);
     const ax=NPC_X+NPC_HEAD_DX*NS, ay=ny+(NNECK_TOP[f]+NPC_CHIN_DROP+NPC_HEAD_DY)*NS;
     if(nheadOK){
       const hh=NPC_HEAD_H*NS, hw=hh*nhead.naturalWidth/nhead.naturalHeight;
@@ -308,7 +329,7 @@ function draw(){
     const f=st.air?2:(st.started?Math.floor(st.frame):0);
     const x=PX, y=GROUND+st.y-SH+4;
     ctx.imageSmoothingQuality='high';
-    ctx.drawImage(body,f*FW,0,FW,FH,x,y,SW,SH);
+    dr(body,f*FW,0,FW,FH,x,y,SW,SH);
     const jumping=st.air, img=jumping?head2:head;
     const sc=(jumping?HEAD2_SCALE:HEAD1_SCALE)*S, ch=jumping?HEAD2_CHIN:HEAD1_CHIN;
     const ax=NECK_X+(jumping?HEAD2_DX:HEAD1_DX), ay=NECK_TOP[f]+CHIN_DROP+(jumping?HEAD2_DY:HEAD1_DY);
@@ -333,5 +354,18 @@ function loop(ts){
   update(dt); draw(); requestAnimationFrame(loop);
 }
 resize(); addEventListener('resize',resize); addEventListener('orientationchange',()=>setTimeout(resize,200));
-reset(); requestAnimationFrame(loop);
+const loaderEl=document.getElementById('loader'), retryBtn=document.getElementById('retry');
+function boot(){
+  retryBtn.style.display='none';
+  loadAll().then(()=>{
+    nheadOK=true; reset(); ready=true; last=0;
+    loaderEl.classList.add('done'); setTimeout(()=>loaderEl.style.display='none',300);
+    requestAnimationFrame(loop);
+  }).catch(err=>{
+    document.getElementById('lmsg').textContent=err.message+' - check your connection.';
+    retryBtn.style.display='block';
+  });
+}
+retryBtn.onclick=()=>{ASSETS.forEach(i=>{i.onload=i.onerror=null; i.removeAttribute('src');}); boot();};
+boot();
 </script></body></html>

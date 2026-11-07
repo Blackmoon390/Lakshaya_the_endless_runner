@@ -113,19 +113,29 @@
   }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 </style>
+<link rel="prefetch" href="animated_frame/run_strip_body.webp" as="image">
+<link rel="prefetch" href="animated_frame/head.webp" as="image">
+<link rel="prefetch" href="animated_frame/head2_resized.webp" as="image">
+<link rel="prefetch" href="animated_frame/npc_body_strip.webp" as="image">
+<link rel="prefetch" href="animated_frame/head_npc.webp" as="image">
+<link rel="prefetch" href="animated_frame/npc_2_body_strip.webp" as="image">
+<link rel="prefetch" href="animated_frame/head_npc2.webp" as="image">
+<link rel="prefetch" href="animated_frame/npc2_sit.webp" as="image">
+<link rel="prefetch" href="animated_frame/obstacle1.webp" as="image">
+<link rel="prefetch" href="animated_frame/obstacle2.webp" as="image">
 </head>
 <body>
 
 <button id="mute" type="button" aria-label="Toggle music">Music: on</button>
 
 <main>
-  <img id="h1" class="head" src="animated_frame/head.png" alt="Smiling head" draggable="false">
+  <img id="h1" class="head" src="animated_frame/head.webp" alt="Smiling head" draggable="false">
   <div class="center">
     <h1>Odukali<br>Lakshaya!</h1>
     <div class="tag">Run. Jump. Giggle.</div>
     <button id="go" type="button">Let's play!</button>
   </div>
-  <img id="h2" class="head" src="animated_frame/head2_resized.png" alt="Laughing head" draggable="false">
+  <img id="h2" class="head" src="animated_frame/head2_resized.webp" alt="Laughing head" draggable="false">
 </main>
 
 <div id="score">Giggles: 0</div>
